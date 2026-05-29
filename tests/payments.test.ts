@@ -72,7 +72,11 @@ describe('ErumPayClient', () => {
 
   it('throws ErumPayError when server returns an error payload', async () => {
     globalThis.fetch = mockFetch(
-      { code: 'DUPLICATED_REQUEST', message: 'Duplicate request' },
+      {
+        code: 'PAYMENT_IDEMPOTENCY_CONFLICT',
+        message: 'Duplicate request',
+        requestId: 'req_test',
+      },
       false,
       409,
     ) as unknown as typeof fetch;
@@ -83,7 +87,8 @@ describe('ErumPayClient', () => {
       erumpay.payments.request({ amount: 1000, orderName: 'x', channel: 'ONLINE' }),
     ).rejects.toMatchObject({
       status: 409,
-      code: 'DUPLICATED_REQUEST',
+      code: 'PAYMENT_IDEMPOTENCY_CONFLICT',
+      requestId: 'req_test',
     });
   });
 

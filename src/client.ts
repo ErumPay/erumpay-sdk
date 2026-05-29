@@ -51,11 +51,13 @@ export class ErumPayClient {
       const err = (await res.json().catch(() => ({}))) as {
         code?: string;
         message?: string;
+        requestId?: string;
       };
       throw new ErumPayError(
         res.status,
         err.code ?? 'UNKNOWN',
         err.message ?? res.statusText,
+        err.requestId,
       );
     }
 
