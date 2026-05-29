@@ -1,59 +1,44 @@
 import type { ErumPayClient } from '../client';
 import type {
+  CancelResult,
+  Payment,
   PaymentRequest,
   PaymentRequestResult,
-  Payment,
-  CancelResult,
 } from '../types';
 
-/**
- * 결제 관련 메서드 모음.
- * 가맹점이 실제로 호출하는 것만 노출한다.
- *
- * ※ 더치페이/원격결제/카드추천은 여기 없다.
- *    그건 ErumPay 결제창 "안에서" 사용자가 진행하는 기능이라,
- *    가맹점이 호출할 대상이 아니다. request()로 결제창을 띄우면
- *    그 안에서 채널에 맞게 자동으로 제공된다.
- */
+export interface RequestOptions {
+  idempotencyKey?: string;
+}
+
 export class PaymentsResource {
   constructor(private readonly client: ErumPayClient) {}
 
-  /**
-   * 결제를 생성하고 ErumPay 결제창 진입 정보를 받는다.
-   * 이게 가맹점이 부르는 핵심 메서드.
-   *
-   * @example
-   * const { redirectUrl } = await erumpay.payments.request({
-   *   amount: 15000,
-   *   orderName: '텀블러',
-   *   channel: 'ONLINE',
-   *   successUrl: 'https://myshop.com/success',
-   * });
-   * window.location.href = redirectUrl; // 결제창으로 이동
-   */
-  request(params: PaymentRequest): Promise<PaymentRequestResult> {
-    return this.client.request<PaymentRequestResult>('POST', '/api/v1/payment/qr/request', {
+  // [be] 나영은 260529 1638 | 가맹점이 SDK로 결제 주문을 생성하고 ErumPay 결제창 진입 정보를 받는 메서드.
+  request(params: PaymentRequest, options: RequestOptions = {}): Promise<PaymentRequestResult> {
+    return this.client.request<PaymentRequestResult>('POST', '/api/v1/merchant/payments', {
       body: params,
       idempotent: true,
+      idempotencyKey: options.idempotencyKey,
     });
   }
 
-  /**
-   * 결제 상세/상태를 조회한다.
-   * 결제 완료 여부를 확인할 때 사용.
-   */
-  get(paymentId: string): Promise<Payment> {
-    return this.client.request<Payment>('GET', `/api/v1/payment/${paymentId}`);
+  // [be] 나영은 260529 1638 | 가맹점이 paymentId로 결제 상태를 재조회하는 메서드.
+  get(paymentId: number | string): Promise<Payment> {
+    return this.client.request<Payment>(
+      'GET',
+      `/api/v1/merchant/payments/${encodeURIComponent(String(paymentId))}`,
+    );
   }
 
-  /**
-   * 가맹점이 결제를 취소한다.
-   */
-  cancel(paymentId: string): Promise<CancelResult> {
+  // [be] 나영은 260529 1638 | 가맹점이 결제를 취소할 때 사용하는 메서드. 실제 취소 가능 여부는 서버 상태(PAID 등)가 판단한다.
+  cancel(paymentId: number | string, options: RequestOptions = {}): Promise<CancelResult> {
     return this.client.request<CancelResult>(
       'POST',
-      `/api/v1/payment/${paymentId}/merchant/cancel`,
-      { idempotent: true },
+      `/api/v1/merchant/payments/${encodeURIComponent(String(paymentId))}/cancel`,
+      {
+        idempotent: true,
+        idempotencyKey: options.idempotencyKey,
+      },
     );
   }
 }
