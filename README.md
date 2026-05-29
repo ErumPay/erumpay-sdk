@@ -1,14 +1,14 @@
 # @erumpay/sdk
 
-ErumPay 결제 연동 TypeScript SDK. 가맹점이 자기 서비스에 ErumPay 결제를 붙일 수 있게 해줍니다.
+TypeScript SDK for ErumPay merchant payment integration.
 
-## 설치
+## Install
 
 ```bash
 npm install @erumpay/sdk
 ```
 
-## 빠른 시작
+## Quick Start
 
 ```typescript
 import { ErumPayClient } from '@erumpay/sdk';
@@ -17,68 +17,98 @@ const erumpay = new ErumPayClient({
   apiKey: process.env.ERUMPAY_API_KEY!,
 });
 
-// 1. 결제 생성 → 결제창 진입 URL 받기
-const { redirectUrl } = await erumpay.payments.request({
-  amount: 15000,
-  orderName: '텀블러',
-  channel: 'ONLINE', // 'ONLINE' | 'OFFLINE'
-  successUrl: 'https://myshop.com/success',
-});
+const { paymentId, redirectUrl } = await erumpay.payments.request(
+  {
+    amount: 15000,
+    orderName: 'Americano',
+    channel: 'ONLINE',
+    successUrl: 'https://myshop.example/success',
+    failUrl: 'https://myshop.example/fail',
+  },
+  { idempotencyKey: 'order-1001-create' },
+);
 
-// 2. 사용자를 ErumPay 결제창으로 보낸다
 window.location.href = redirectUrl;
 
-// 3. 나중에 결제 상태 확인
-const payment = await erumpay.payments.get('pay_1');
+const payment = await erumpay.payments.get(paymentId);
 if (payment.status === 'PAID') {
-  // 주문 확정 처리
+  // Confirm the merchant order.
 }
 ```
 
-## 채널과 결제창
+## Development Server Keys
 
-`channel` 값에 따라 ErumPay 결제창이 알아서 다른 버튼을 띄웁니다.
-가맹점은 채널만 넘기면 되고, 더치페이/원격결제 UI를 직접 만들 필요가 없습니다.
+Until the real merchant API-key registry is connected on the server, the
+payment-service development resolver accepts keys shaped like:
 
-| channel | 결제창 버튼 |
-|---------|------------|
-| `OFFLINE` | 결제하기 / 더치페이하기 |
-| `ONLINE` | 결제하기 / 원격결제 요청하기 |
+```text
+merchant_{merchantId}_{secret}
+test_{merchantId}_{secret}
+```
+
+For example, `test_1_local` resolves to merchant id `1`.
 
 ## API
 
-### `payments.request(params)`
-결제를 생성하고 결제창 진입 정보를 반환합니다. 멱등키는 자동으로 처리됩니다.
+SDK는 가맹점 쇼핑몰이 ErumPay 결제창을 여는 입구만 제공합니다. 카드추천, 더치페이, 원격결제, PIN 인증은 ErumPay 결제창 또는 앱 내부에서 사용자가 진행하는 기능이며, 가맹점 SDK 메서드로 직접 노출하지 않습니다.
+
+### `payments.request(params, options?)`
+
+Creates a merchant payment and returns ErumPay checkout entry data.
+
+Endpoint: `POST /api/v1/merchant/payments`
 
 ### `payments.get(paymentId)`
-결제 상세/상태를 조회합니다.
 
-### `payments.cancel(paymentId)`
-가맹점이 결제를 취소합니다.
+Fetches merchant payment details.
 
-## 에러 처리
+Endpoint: `GET /api/v1/merchant/payments/{paymentId}`
+
+### `payments.cancel(paymentId, options?)`
+
+Cancels a merchant payment.
+
+Endpoint: `POST /api/v1/merchant/payments/{paymentId}/cancel`
+
+## Errors
+
+서버 API 실패는 모두 `ErumPayError`로 변환됩니다.
 
 ```typescript
 import { ErumPayError } from '@erumpay/sdk';
 
 try {
-  await erumpay.payments.request({ ... });
+  await erumpay.payments.request({ amount: 1000, orderName: 'Order', channel: 'ONLINE' });
 } catch (e) {
   if (e instanceof ErumPayError) {
-    console.error(e.status, e.code, e.message);
+    console.error(e.status, e.code, e.message, e.requestId);
   }
 }
 ```
 
-## 개발
+가맹점 결제 API는 아래처럼 안정적인 공개 에러 응답을 반환합니다.
+
+```json
+{
+  "status": 409,
+  "error": "CONFLICT",
+  "code": "PAYMENT_IDEMPOTENCY_CONFLICT",
+  "message": "동일 멱등키 요청이 이미 처리되었습니다.",
+  "requestId": "req_20260529_xxx"
+}
+```
+
+전체 공개 코드 표, 재시도 가이드, 멱등성 규칙, 내부 서비스 구현 규칙은 [ERROR_CODES.md](./ERROR_CODES.md)를 기준으로 봅니다.
+
+## Development
 
 ```bash
 npm install
-npm run build      # dist/ 생성
-npm test           # 테스트 실행
-npm run typecheck  # 타입 체크
+npm run typecheck
+npm run build
+npm test
 ```
 
-## 라이선스
+## License
 
 MIT

@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ErumPayClient } from '../src/client';
 import { ErumPayError } from '../src/errors';
 
-// fetch를 가짜로 바꿔서 실제 서버 없이 SDK 동작만 테스트한다
 function mockFetch(response: unknown, ok = true, status = 200) {
   return vi.fn().mockResolvedValue({
     ok,
@@ -18,71 +17,87 @@ describe('ErumPayClient', () => {
     vi.restoreAllMocks();
   });
 
-  it('apiKey 없이 생성하면 에러를 던진다', () => {
-    // @ts-expect-error 의도적으로 apiKey 누락
+  it('throws when apiKey is missing', () => {
+    // @ts-expect-error intentionally missing apiKey
     expect(() => new ErumPayClient({})).toThrow();
   });
 
-  it('payments.request는 Idempotency-Key를 자동으로 붙인다', async () => {
+  it('creates merchant payments with authorization and idempotency headers', async () => {
     const fetchMock = mockFetch({
-      paymentId: 'pay_1',
+      paymentId: 1,
       orderNo: 'ord_1',
+      orderName: 'Americano',
+      amount: 15000,
+      channel: 'ONLINE',
+      status: 'CREATED',
       redirectUrl: 'https://erumpay.com/checkout/pay_1',
     });
-    global.fetch = fetchMock as unknown as typeof fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const erumpay = new ErumPayClient({ apiKey: 'test_key' });
-    await erumpay.payments.request({
-      amount: 15000,
-      orderName: '텀블러',
-      channel: 'ONLINE',
-    });
+    const erumpay = new ErumPayClient({ apiKey: 'test_1_key' });
+    await erumpay.payments.request(
+      {
+        amount: 15000,
+        orderName: 'Americano',
+        channel: 'ONLINE',
+      },
+      { idempotencyKey: 'idem_1' },
+    );
 
-    const headers = fetchMock.mock.calls[0][1].headers;
-    expect(headers['Idempotency-Key']).toBeDefined();
-    expect(headers['Authorization']).toBe('Bearer test_key');
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.method).toBe('POST');
+    expect(init.headers['Idempotency-Key']).toBe('idem_1');
+    expect(init.headers['Authorization']).toBe('Bearer test_1_key');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.erumpay.com/api/v1/merchant/payments');
   });
 
-  it('payments.get은 결제 정보를 반환한다', async () => {
-    global.fetch = mockFetch({
-      paymentId: 'pay_1',
+  it('gets merchant payment details', async () => {
+    const fetchMock = mockFetch({
+      paymentId: 1,
       orderNo: 'ord_1',
-      orderName: '텀블러',
+      orderName: 'Americano',
       amount: 15000,
       channel: 'ONLINE',
       status: 'PAID',
-    }) as unknown as typeof fetch;
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const erumpay = new ErumPayClient({ apiKey: 'test_key' });
-    const payment = await erumpay.payments.get('pay_1');
+    const erumpay = new ErumPayClient({ apiKey: 'test_1_key' });
+    const payment = await erumpay.payments.get(1);
 
     expect(payment.status).toBe('PAID');
     expect(payment.amount).toBe(15000);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.erumpay.com/api/v1/merchant/payments/1');
   });
 
-  it('서버가 에러를 주면 ErumPayError를 던진다', async () => {
-    global.fetch = mockFetch(
-      { code: 'DUPLICATE_PAYMENT', message: '중복 결제입니다' },
+  it('throws ErumPayError when server returns an error payload', async () => {
+    globalThis.fetch = mockFetch(
+      {
+        code: 'PAYMENT_IDEMPOTENCY_CONFLICT',
+        message: 'Duplicate request',
+        requestId: 'req_test',
+      },
       false,
       409,
     ) as unknown as typeof fetch;
 
-    const erumpay = new ErumPayClient({ apiKey: 'test_key' });
+    const erumpay = new ErumPayClient({ apiKey: 'test_1_key' });
 
     await expect(
       erumpay.payments.request({ amount: 1000, orderName: 'x', channel: 'ONLINE' }),
     ).rejects.toMatchObject({
       status: 409,
-      code: 'DUPLICATE_PAYMENT',
+      code: 'PAYMENT_IDEMPOTENCY_CONFLICT',
+      requestId: 'req_test',
     });
   });
 
-  it('throw된 에러는 instanceof ErumPayError로 잡힌다', async () => {
-    global.fetch = mockFetch({ code: 'X', message: 'y' }, false, 400) as unknown as typeof fetch;
-    const erumpay = new ErumPayClient({ apiKey: 'test_key' });
+  it('supports instanceof ErumPayError', async () => {
+    globalThis.fetch = mockFetch({ code: 'X', message: 'y' }, false, 400) as unknown as typeof fetch;
+    const erumpay = new ErumPayClient({ apiKey: 'test_1_key' });
 
     try {
-      await erumpay.payments.get('pay_1');
+      await erumpay.payments.get(1);
       expect.unreachable();
     } catch (e) {
       expect(e).toBeInstanceOf(ErumPayError);
