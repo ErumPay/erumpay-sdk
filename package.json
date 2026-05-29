@@ -1,0 +1,37 @@
+{
+  "name": "@erumpay/sdk",
+  "version": "0.1.0",
+  "description": "ErumPay 결제 연동 SDK — 가맹점이 ErumPay 결제를 자기 서비스에 붙일 수 있게 해주는 TypeScript 라이브러리",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "erumpay",
+    "payment",
+    "sdk"
+  ],
+  "devDependencies": {
+    "tsup": "^8.0.2",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}
