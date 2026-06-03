@@ -12,6 +12,18 @@ function mockFetch(response: unknown, ok = true, status = 200) {
   });
 }
 
+function mockNonJsonFetch(status = 502, statusText = 'Bad Gateway') {
+  return vi.fn().mockResolvedValue({
+    ok: false,
+    status,
+    statusText,
+    text: async () => statusText,
+    json: async () => {
+      throw new Error('not json');
+    },
+  });
+}
+
 describe('ErumPayClient', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -51,6 +63,31 @@ describe('ErumPayClient', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.erumpay.com/api/v1/merchant/payments');
   });
 
+  it('uses a custom baseURL and trims trailing slashes', async () => {
+    const fetchMock = mockFetch({
+      paymentId: 1,
+      orderNo: 'ord_1',
+      orderName: 'Americano',
+      amount: 15000,
+      channel: 'ONLINE',
+      status: 'CREATED',
+      redirectUrl: 'http://localhost:8083/checkout/1',
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const erumpay = new ErumPayClient({
+      apiKey: 'test_1_key',
+      baseURL: 'http://localhost:8083/',
+    });
+
+    await erumpay.payments.request(
+      { amount: 15000, orderName: 'Americano', channel: 'ONLINE' },
+      { idempotencyKey: 'idem_1' },
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8083/api/v1/merchant/payments');
+  });
+
   it('gets merchant payment details', async () => {
     const fetchMock = mockFetch({
       paymentId: 1,
@@ -76,6 +113,8 @@ describe('ErumPayClient', () => {
         code: 'PAYMENT_IDEMPOTENCY_CONFLICT',
         message: 'Duplicate request',
         requestId: 'req_test',
+        correlationId: 'pay_test',
+        details: [{ field: 'amount', message: 'must be positive' }],
       },
       false,
       409,
@@ -89,6 +128,36 @@ describe('ErumPayClient', () => {
       status: 409,
       code: 'PAYMENT_IDEMPOTENCY_CONFLICT',
       requestId: 'req_test',
+      correlationId: 'pay_test',
+      details: [{ field: 'amount', message: 'must be positive' }],
+    });
+  });
+
+  it('cancels merchant payments with an idempotency header', async () => {
+    const fetchMock = mockFetch({
+      paymentId: 1,
+      status: 'CANCELED',
+      canceledAt: '2026-06-02T10:00:00',
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const erumpay = new ErumPayClient({ apiKey: 'test_1_key' });
+    await erumpay.payments.cancel(1, { idempotencyKey: 'cancel_1' });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.method).toBe('POST');
+    expect(init.headers['Idempotency-Key']).toBe('cancel_1');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.erumpay.com/api/v1/merchant/payments/1/cancel');
+  });
+
+  it('falls back to UNKNOWN for non-json error responses', async () => {
+    globalThis.fetch = mockNonJsonFetch() as unknown as typeof fetch;
+    const erumpay = new ErumPayClient({ apiKey: 'test_1_key' });
+
+    await expect(erumpay.payments.get(1)).rejects.toMatchObject({
+      status: 502,
+      code: 'UNKNOWN',
+      message: 'Bad Gateway',
     });
   });
 

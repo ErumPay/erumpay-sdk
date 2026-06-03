@@ -1,7 +1,7 @@
 {
   "name": "@erumpay/sdk",
   "version": "0.1.0",
-  "description": "ErumPay 결제 연동 SDK — 가맹점이 ErumPay 결제를 자기 서비스에 붙일 수 있게 해주는 TypeScript 라이브러리",
+  "description": "TypeScript SDK for ErumPay merchant server payment integration.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",

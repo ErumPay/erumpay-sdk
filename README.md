@@ -1,6 +1,9 @@
 # @erumpay/sdk
 
-TypeScript SDK for ErumPay merchant payment integration.
+TypeScript SDK for ErumPay merchant server payment integration.
+
+This package is currently a **merchant server SDK**. Keep the merchant API key on
+the merchant backend and do not expose it in browser/mobile client bundles.
 
 ## Install
 
@@ -8,15 +11,45 @@ TypeScript SDK for ErumPay merchant payment integration.
 npm install @erumpay/sdk
 ```
 
-## Quick Start
+## Runtime Configuration
+
+Manage credentials and endpoints with environment variables in the merchant
+server application. See `.env.example` for a local development sample.
+
+```env
+ERUMPAY_API_KEY=test_1_local
+ERUMPAY_BASE_URL=http://localhost:8083
+```
 
 ```typescript
 import { ErumPayClient } from '@erumpay/sdk';
 
 const erumpay = new ErumPayClient({
   apiKey: process.env.ERUMPAY_API_KEY!,
+  baseURL: process.env.ERUMPAY_BASE_URL!,
 });
+```
 
+Local endpoint notes:
+
+| Target | Base URL | When to use |
+| --- | --- | --- |
+| API Gateway | `http://localhost:8080` | Integrated local flow through gateway |
+| payment-service | `http://localhost:8083` | Direct payment-service development test |
+
+`merchant-service` runs on port `8094`, but this SDK does not call
+merchant-service directly. The SDK calls the merchant payment API implemented in
+payment-service:
+
+```text
+POST /api/v1/merchant/payments
+GET  /api/v1/merchant/payments/{paymentId}
+POST /api/v1/merchant/payments/{paymentId}/cancel
+```
+
+## Quick Start
+
+```typescript
 const { paymentId, redirectUrl } = await erumpay.payments.request(
   {
     amount: 15000,
@@ -28,7 +61,9 @@ const { paymentId, redirectUrl } = await erumpay.payments.request(
   { idempotencyKey: 'order-1001-create' },
 );
 
-window.location.href = redirectUrl;
+// The merchant frontend can redirect the buyer to ErumPay checkout.
+// This redirect should happen after the merchant server creates the payment.
+console.log(paymentId, redirectUrl);
 
 const payment = await erumpay.payments.get(paymentId);
 if (payment.status === 'PAID') {
@@ -50,55 +85,88 @@ For example, `test_1_local` resolves to merchant id `1`.
 
 ## API
 
-SDK는 가맹점 쇼핑몰이 ErumPay 결제창을 여는 입구만 제공합니다. 카드추천, 더치페이, 원격결제, PIN 인증은 ErumPay 결제창 또는 앱 내부에서 사용자가 진행하는 기능이며, 가맹점 SDK 메서드로 직접 노출하지 않습니다.
-
 ### `payments.request(params, options?)`
 
 Creates a merchant payment and returns ErumPay checkout entry data.
 
-Endpoint: `POST /api/v1/merchant/payments`
+Endpoint:
+
+```text
+POST /api/v1/merchant/payments
+```
 
 ### `payments.get(paymentId)`
 
-Fetches merchant payment details.
+Fetches merchant-owned payment details.
 
-Endpoint: `GET /api/v1/merchant/payments/{paymentId}`
+Endpoint:
+
+```text
+GET /api/v1/merchant/payments/{paymentId}
+```
 
 ### `payments.cancel(paymentId, options?)`
 
-Cancels a merchant payment.
+Cancels a merchant-owned payment.
 
-Endpoint: `POST /api/v1/merchant/payments/{paymentId}/cancel`
+Endpoint:
+
+```text
+POST /api/v1/merchant/payments/{paymentId}/cancel
+```
 
 ## Errors
 
-서버 API 실패는 모두 `ErumPayError`로 변환됩니다.
+Server API failures are converted to `ErumPayError`.
 
 ```typescript
 import { ErumPayError } from '@erumpay/sdk';
 
 try {
-  await erumpay.payments.request({ amount: 1000, orderName: 'Order', channel: 'ONLINE' });
+  await erumpay.payments.request(
+    { amount: 1000, orderName: 'Order', channel: 'ONLINE' },
+    { idempotencyKey: 'order-1001-create' },
+  );
 } catch (e) {
   if (e instanceof ErumPayError) {
-    console.error(e.status, e.code, e.message, e.requestId);
+    console.error(e.status, e.code, e.message, e.requestId, e.correlationId);
   }
 }
 ```
 
-가맹점 결제 API는 아래처럼 안정적인 공개 에러 응답을 반환합니다.
+Expected error payload shape:
 
 ```json
 {
   "status": 409,
   "error": "CONFLICT",
   "code": "PAYMENT_IDEMPOTENCY_CONFLICT",
-  "message": "동일 멱등키 요청이 이미 처리되었습니다.",
-  "requestId": "req_20260529_xxx"
+  "message": "The same idempotency key has already been used.",
+  "requestId": "req_20260529_xxx",
+  "correlationId": "pay_018fc9d2",
+  "details": []
 }
 ```
 
-전체 공개 코드 표, 재시도 가이드, 멱등성 규칙, 내부 서비스 구현 규칙은 [ERROR_CODES.md](./ERROR_CODES.md)를 기준으로 봅니다.
+`requestId`, `correlationId`, and `details` are optional. They are only useful
+when the backend actually returns them.
+
+See [ERROR_CODES.md](./ERROR_CODES.md) for public merchant API error codes.
+
+## Browser Checkout SDK
+
+This package does not yet provide a browser checkout SDK.
+
+The likely split is:
+
+| Package | Runs in | Responsibility |
+| --- | --- | --- |
+| `@erumpay/sdk` | Merchant server | Create/read/cancel merchant payments with API key |
+| `@erumpay/checkout-js` | Browser/mobile webview | Open ErumPay checkout with public checkout data |
+
+For now, the merchant server should call `payments.request()` and pass the
+returned `redirectUrl` to the merchant frontend. The frontend can then redirect
+the buyer to the ErumPay checkout screen.
 
 ## Development
 
@@ -107,6 +175,14 @@ npm install
 npm run typecheck
 npm run build
 npm test
+```
+
+On Windows PowerShell, use `npm.cmd` if script execution policy blocks `npm.ps1`:
+
+```powershell
+npm.cmd run typecheck
+npm.cmd run build
+npm.cmd test
 ```
 
 ## License
