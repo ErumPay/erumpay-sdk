@@ -40,7 +40,28 @@ const erumpay = new ErumPayClient({
   apiKey: process.env.ERUMPAY_API_KEY!,
   baseURL: process.env.ERUMPAY_BASE_URL!,
 });
+```
 
+Local endpoint notes:
+
+| Target | Base URL | When to use |
+| --- | --- | --- |
+| API Gateway | `http://localhost:8080` | Integrated local flow through gateway |
+| payment-service | `http://localhost:8083` | Direct payment-service development test |
+
+`merchant-service` runs on port `8094`, but this SDK does not call
+merchant-service directly. The SDK calls the merchant payment API implemented in
+payment-service:
+
+```text
+POST /api/v1/merchant/payments
+GET  /api/v1/merchant/payments/{paymentId}
+POST /api/v1/merchant/payments/{paymentId}/cancel
+```
+
+## Quick Start
+
+```typescript
 const { paymentId, redirectUrl } = await erumpay.payments.request(
   {
     amount: 15000,
