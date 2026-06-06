@@ -1,14 +1,21 @@
 export { ErumPayClient } from './client';
 export type { ErumPayConfig } from './client';
 
-export { ErumPayError } from './errors';
-export type { ErrorDetails } from './errors';
+export { ErumPayConnectionError, ErumPayError } from './errors';
+export type { ErrorDetails, ErumPayErrorParams, ErumPayErrorPayload } from './errors';
+
+export {
+  DEFAULT_TERMINAL_PAYMENT_STATUSES,
+  isTerminalPaymentStatus,
+} from './types';
 
 export type {
+  CancelResult,
   Channel,
-  PaymentStatus,
+  Payment,
   PaymentRequest,
   PaymentRequestResult,
-  Payment,
-  CancelResult,
+  PaymentStatus,
+  TerminalPaymentStatus,
+  WaitForPaymentOptions,
 } from './types';

@@ -1,57 +1,32 @@
 # @erumpay/sdk
 
-TypeScript SDK for ErumPay merchant server payment integration.
+ErumPay 가맹점 서버 결제 연동을 위한 공식 TypeScript SDK입니다.
 
-This package is currently a **merchant server SDK**. Keep the merchant API key
-on the merchant backend and do not expose it in browser or mobile client bundles.
+이 패키지는 **가맹점 서버용 SDK**입니다. 가맹점 API Key는 반드시 백엔드 서버에만 보관해야 하며,
+브라우저, 모바일 앱, React Native, 데스크톱 클라이언트 번들에 포함하면 안 됩니다.
 
-## Install
+## 설치
 
 ```bash
 npm install @erumpay/sdk
 ```
 
-## Environment
-
-Manage credentials and endpoints with environment variables.
+## 환경 변수
 
 ```env
 ERUMPAY_API_KEY=test_1_local
 ERUMPAY_BASE_URL=http://localhost:8083
 ```
 
-Local endpoint guide:
+로컬 개발 기준 엔드포인트:
 
-```text
-payment-service direct: http://localhost:8083
-API Gateway:            http://localhost:8080
-```
-
-`merchant-service` runs on port `8094`, but this SDK does not call
-merchant-service directly. The SDK calls the merchant payment API implemented in
-payment-service.
-
-## Quick Start
-
-```typescript
-import { ErumPayClient } from '@erumpay/sdk';
-
-const erumpay = new ErumPayClient({
-  apiKey: process.env.ERUMPAY_API_KEY!,
-  baseURL: process.env.ERUMPAY_BASE_URL!,
-});
-```
-
-Local endpoint notes:
-
-| Target | Base URL | When to use |
+| 대상 | Base URL | 사용 시점 |
 | --- | --- | --- |
-| API Gateway | `http://localhost:8080` | Integrated local flow through gateway |
-| payment-service | `http://localhost:8083` | Direct payment-service development test |
+| API Gateway | `http://localhost:8080` | gateway까지 포함한 통합 로컬 테스트 |
+| payment-service | `http://localhost:8083` | payment-service 직접 개발/검증 |
 
-`merchant-service` runs on port `8094`, but this SDK does not call
-merchant-service directly. The SDK calls the merchant payment API implemented in
-payment-service:
+`merchant-service`는 `8094` 포트에서 실행되지만, 이 SDK는 `merchant-service`를 직접 호출하지 않습니다.
+SDK는 `payment-service`에 구현된 가맹점 결제 API를 호출합니다.
 
 ```text
 POST /api/v1/merchant/payments
@@ -59,288 +34,248 @@ GET  /api/v1/merchant/payments/{paymentId}
 POST /api/v1/merchant/payments/{paymentId}/cancel
 ```
 
-## Quick Start
+## 빠른 시작
 
 ```typescript
-const { paymentId, redirectUrl } = await erumpay.payments.request(
+import { ErumPayClient, ErumPayError } from '@erumpay/sdk';
+
+const erumpay = new ErumPayClient({
+  apiKey: process.env.ERUMPAY_API_KEY!,
+  baseURL: process.env.ERUMPAY_BASE_URL!,
+});
+
+try {
+  const payment = await erumpay.payments.request(
+    {
+      amount: 15000,
+      orderName: '아메리카노 2잔',
+      channel: 'ONLINE',
+      successUrl: 'https://merchant.example/success',
+      failUrl: 'https://merchant.example/fail',
+    },
+    { idempotencyKey: 'order-1001-create' },
+  );
+
+  // 가맹점 프론트엔드에 redirectUrl을 내려주고, 구매자를 ErumPay 결제 화면으로 이동시킵니다.
+  console.log(payment.paymentId, payment.redirectUrl);
+} catch (error) {
+  if (error instanceof ErumPayError) {
+    console.error(error.status, error.code, error.message, error.requestId, error.correlationId);
+  }
+  throw error;
+}
+```
+
+## 결제 흐름
+
+```text
+가맹점 백엔드
+-> erumpay.payments.request() 호출
+-> paymentId, redirectUrl, qrToken 수신
+-> 가맹점 프론트엔드에 redirectUrl 전달
+
+가맹점 프론트엔드
+-> 구매자를 redirectUrl로 이동
+-> ErumPay checkout 화면 또는 모바일 앱에서 결제 진행
+
+가맹점 백엔드
+-> 추후 웹훅을 받거나, 로컬 테스트에서는 payments.get()으로 상태 확인
+-> status가 PAID가 되면 가맹점 주문을 결제 완료 처리
+```
+
+결제창 진입 URL을 만드는 서버 설정:
+
+```env
+CHECKOUT_REDIRECT_BASE_URL=http://localhost:5173/checkout?token=
+```
+
+## 어떤 화면을 만들어야 하나요?
+
+지라 `KAN-1160 5.8.5 SDK 데모 페이지 작성`에서 말하는 화면은 **ErumPay 내부 결제창**이 아니라
+**가맹점 입장에서 SDK 연동을 확인하는 데모 화면**입니다.
+
+권장 데모 화면:
+
+- 상품/주문 요약 영역: 상품명, 주문번호, 결제 금액
+- 결제 버튼: `ErumPay로 결제하기`
+- 요청 결과 영역: `paymentId`, `orderNo`, `redirectUrl`, 현재 결제 상태
+- 개발자 확인 영역: 사용한 `Idempotency-Key`, API base URL, 에러 코드와 `requestId`
+- 테스트 버튼: 결제 상태 다시 조회, 결제 취소 요청
+
+중요한 경계:
+
+- 데모 프론트엔드는 API Key를 절대 들고 있지 않습니다.
+- 데모 프론트엔드는 가맹점 샘플 백엔드에 주문 생성 요청만 보냅니다.
+- 샘플 백엔드가 `@erumpay/sdk`로 `payments.request()`를 호출합니다.
+- 샘플 백엔드가 받은 `redirectUrl`만 프론트엔드에 내려줍니다.
+
+자세한 화면 설계는 [docs/DEMO_PAGE_PLAN.md](./docs/DEMO_PAGE_PLAN.md)를 참고하세요.
+
+## API
+
+### `payments.request(params, options?)`
+
+가맹점 결제를 생성하고 ErumPay 결제창 진입 정보를 반환합니다.
+
+```typescript
+const payment = await erumpay.payments.request(
   {
     amount: 15000,
-    orderName: 'Americano',
+    orderName: '아메리카노 2잔',
     channel: 'ONLINE',
   },
   { idempotencyKey: 'order-1001-create' },
 );
-
-// Send redirectUrl to the merchant frontend.
-console.log(paymentId, redirectUrl);
-
-const payment = await erumpay.payments.get(paymentId);
-if (payment.status === 'PAID') {
-  // Confirm the merchant order.
-}
-```
-
-## Checkout Redirect
-
-`payments.request()` returns checkout entry data:
-
-```json
-{
-  "paymentId": 8,
-  "redirectUrl": "http://localhost:5173/checkout?token=...",
-  "qrToken": "..."
-}
-```
-
-The server SDK only creates and reads merchant payments. The real buyer-facing
-checkout screen is a separate frontend surface.
-
-Recommended flow:
-
-```text
-Merchant backend
--> calls erumpay.payments.request()
--> returns redirectUrl to merchant frontend
-
-Merchant frontend
--> redirects buyer to redirectUrl
--> ErumPay checkout/mobile app handles payment
-```
-
-The payment-service value that controls `redirectUrl` is:
-
-```env
-CHECKOUT_REDIRECT_BASE_URL=http://localhost:5173/checkout?token=
-```
-
-Until the checkout frontend is ready, this value may point to a placeholder URL.
-
-## 한국어 가이드
-
-### 현재 SDK의 역할
-
-`@erumpay/sdk`는 현재 **가맹점 서버용 SDK**입니다.
-
-가맹점 프론트나 모바일 앱에서 직접 사용하는 패키지가 아니라, 가맹점 백엔드가
-ErumPay 결제 생성/조회/취소 API를 호출할 때 사용합니다. API Key는 반드시
-가맹점 서버에만 보관해야 하며, 브라우저나 모바일 앱 번들에 포함하면 안 됩니다.
-
-현재 서버용 SDK 흐름:
-
-```text
-가맹점 서버
--> erumpay.payments.request() 호출
--> paymentId, redirectUrl, qrToken 수신
--> 가맹점 프론트에 redirectUrl 전달
--> 사용자가 redirectUrl로 ErumPay 결제 화면 진입
-```
-
-### redirectUrl의 의미
-
-`redirectUrl`은 SDK에서만 쓰는 값이 아니라, payment-service의 merchant 결제
-생성 API가 내려주는 **온라인 결제창 진입 URL**입니다.
-
-payment-service 설정:
-
-```env
-CHECKOUT_REDIRECT_BASE_URL=http://localhost:5173/checkout?token=
-```
-
-결제 생성 후 응답 예시:
-
-```json
-{
-  "paymentId": 8,
-  "redirectUrl": "http://localhost:5173/checkout?token=abc123",
-  "qrToken": "abc123"
-}
-```
-
-`CHECKOUT_REDIRECT_BASE_URL`은 기존 모바일 앱의 QR 스캔 화면을 직접 바꾸는 값이
-아닙니다. 기존 QR 스캔/QR 이미지 생성용 URL은 payment-service의 `QR_BASEURL`
-영역이고, SDK 온라인 결제 진입 URL은 `CHECKOUT_REDIRECT_BASE_URL`로 분리해서
-관리합니다.
-
-### 온라인 결제 화면 방향
-
-온라인 결제에서는 가맹점 페이지에 "이룸페이 결제" 버튼을 두고, 버튼 클릭 시
-가맹점 서버가 `payments.request()`로 결제 건을 생성합니다.
-
-그 다음 사용자는 `redirectUrl`로 이동합니다.
-
-PC 웹에서는 ErumPay 결제 화면에서 QR을 보여주고, 사용자가 모바일 앱으로 QR을
-스캔해 결제를 이어갈 수 있습니다.
-
-모바일 웹에서는 ErumPay 앱 딥링크로 연결하고, 앱 실행이 실패하면 웹 결제 화면
-또는 앱 설치 안내 화면으로 fallback할 수 있습니다.
-
-정리하면:
-
-```text
-오프라인 결제
--> 매장/가맹점이 QR 생성
--> 사용자가 ErumPay 앱에서 QR 스캔
--> 앱 안에서 결제수단 선택 화면 진입
-
-온라인 PC 결제
--> 가맹점 웹에서 이룸페이 결제 버튼 클릭
--> ErumPay checkout URL로 이동
--> checkout 화면에서 QR 표시
--> 사용자가 앱으로 QR 스캔 후 결제
-
-온라인 모바일 결제
--> 가맹점 모바일 웹/앱에서 이룸페이 결제 버튼 클릭
--> ErumPay 앱 딥링크 또는 checkout URL로 이동
--> 앱 안에서 결제 진행
-```
-
-### 프론트용 checkout-js는 후속 작업
-
-현재 `@erumpay/sdk`는 서버용입니다.
-
-프론트에서 결제창을 열거나, PC에서는 QR을 보여주고, 모바일에서는 앱 딥링크를
-열어주는 기능은 별도 패키지로 분리하는 것을 권장합니다.
-
-후속 패키지 후보:
-
-```text
-@erumpay/checkout-js
-```
-
-예상 사용 방식:
-
-```typescript
-import { ErumPayCheckout } from '@erumpay/checkout-js';
-
-await ErumPayCheckout.open({
-  paymentId: 8,
-  redirectUrl: 'http://localhost:5173/checkout?token=abc123',
-});
-```
-
-`checkout-js`는 API Key를 받지 않아야 합니다. API Key는 서버용 SDK에서만 쓰고,
-프론트용 SDK는 서버가 생성해준 `redirectUrl` 또는 공개 checkout token만 사용해야
-합니다.
-
-## API
-
-The SDK exposes only merchant-facing payment APIs.
-
-### `payments.request(params, options?)`
-
-Creates a merchant payment and returns ErumPay checkout entry data.
-
-```text
-POST /api/v1/merchant/payments
 ```
 
 ### `payments.get(paymentId)`
 
-Fetches merchant-owned payment details.
+가맹점 소유 결제의 상세 정보를 조회합니다.
 
-```text
-GET /api/v1/merchant/payments/{paymentId}
+```typescript
+const payment = await erumpay.payments.get(8);
 ```
 
 ### `payments.cancel(paymentId, options?)`
 
-Cancels a merchant-owned payment.
-
-```text
-POST /api/v1/merchant/payments/{paymentId}/cancel
-```
-
-## Errors
-
-Server API failures are converted to `ErumPayError`.
+결제 완료된 가맹점 결제를 취소합니다.
 
 ```typescript
-import { ErumPayError } from '@erumpay/sdk';
+const canceled = await erumpay.payments.cancel(8, {
+  idempotencyKey: 'order-1001-cancel',
+});
+```
+
+### `payments.waitForStatus(paymentId, options?)`
+
+결제가 종료 상태가 될 때까지 짧게 polling합니다.
+
+운영 환경의 주문 확정은 웹훅 기반으로 처리하는 것이 좋습니다. 다만 SDK 테스트, 로컬 데모,
+관리자 도구에서는 `waitForStatus()`가 편합니다.
+
+```typescript
+const payment = await erumpay.payments.waitForStatus(8, {
+  intervalMs: 1000,
+  timeoutMs: 60000,
+});
+```
+
+## 멱등성
+
+결제 생성과 취소 요청에는 안정적인 `Idempotency-Key`를 사용해야 합니다.
+가맹점 주문번호와 동작 이름을 조합하는 방식을 권장합니다.
+
+```typescript
+await erumpay.payments.request(order, {
+  idempotencyKey: `${order.id}-create`,
+});
+
+await erumpay.payments.cancel(paymentId, {
+  idempotencyKey: `${order.id}-cancel`,
+});
+```
+
+네트워크 오류가 발생하면 같은 key로 재시도하거나, `payments.get()`으로 결제 상태를 먼저 확인하세요.
+새 주문이 아닌데 새 멱등키를 만들어 재요청하면 중복 결제 위험이 생길 수 있습니다.
+
+## 에러 처리
+
+서버 API 실패는 `ErumPayError`로 변환됩니다. 네트워크 실패, 타임아웃, 잘못된 JSON 응답은
+`ErumPayConnectionError`로 변환됩니다.
+
+```typescript
+import { ErumPayConnectionError, ErumPayError } from '@erumpay/sdk';
 
 try {
   await erumpay.payments.request(
-    { amount: 1000, orderName: 'Order', channel: 'ONLINE' },
+    { amount: 1000, orderName: '테스트 주문', channel: 'ONLINE' },
     { idempotencyKey: 'order-1-create' },
   );
-} catch (e) {
-  if (e instanceof ErumPayError) {
-    console.error(e.status, e.code, e.message, e.requestId, e.correlationId);
+} catch (error) {
+  if (error instanceof ErumPayError) {
+    console.error(error.status, error.code, error.message, error.requestId, error.correlationId);
+  } else if (error instanceof ErumPayConnectionError) {
+    console.error(error.message);
   }
 }
 ```
 
-See [ERROR_CODES.md](./ERROR_CODES.md) for public merchant API error codes.
+공개 에러 코드는 [ERROR_CODES.md](./ERROR_CODES.md)를 참고하세요.
 
-## Server SDK vs Checkout JS
-
-Current package:
-
-```text
-@erumpay/sdk
-Target: merchant server
-Purpose: create/read/cancel merchant payments with API key
-```
-
-Future package:
-
-```text
-@erumpay/checkout-js
-Target: merchant frontend
-Purpose: open ErumPay checkout, redirect to web checkout, or bridge to mobile app
-```
-
-Initial checkout-js design:
+## 설정 옵션
 
 ```typescript
-import { ErumPayCheckout } from '@erumpay/checkout-js';
-
-await ErumPayCheckout.open({
-  paymentId: 8,
-  redirectUrl: 'http://localhost:5173/checkout?token=...',
+const erumpay = new ErumPayClient({
+  apiKey: process.env.ERUMPAY_API_KEY!,
+  baseURL: process.env.ERUMPAY_BASE_URL,
+  timeoutMs: 30000,
+  maxRetries: 1,
 });
 ```
 
-Platform behavior:
+| 옵션 | 필수 | 기본값 | 설명 |
+| --- | --- | --- | --- |
+| `apiKey` | 예 | 없음 | ErumPay가 발급한 가맹점 API Key입니다. |
+| `baseURL` | 아니오 | `https://api.erumpay.com` | ErumPay API base URL입니다. |
+| `timeoutMs` | 아니오 | `30000` | 요청별 타임아웃입니다. |
+| `maxRetries` | 아니오 | `1` | GET 또는 멱등 POST 실패 시 자동 재시도 횟수입니다. |
+| `fetch` | 아니오 | `globalThis.fetch` | 테스트 또는 특수 런타임에서 사용할 custom fetch입니다. |
+
+## 서버 SDK와 Checkout JS의 경계
+
+현재 패키지:
 
 ```text
-Desktop web: open checkout page or show QR for mobile app payment
-Mobile web:  open ErumPay app deep link, fallback to checkout page
+@erumpay/sdk
+대상: 가맹점 서버
+목적: API Key로 결제 생성, 조회, 상태 대기, 취소 수행
 ```
 
-## MCP Server Plan
-
-The MCP server is a separate follow-up project. It can use this server SDK
-internally to expose ErumPay tools.
-
-Candidate MCP tools:
+추후 프론트엔드 패키지:
 
 ```text
-create_payment
-get_payment
-cancel_payment
+@erumpay/checkout-js
+대상: 가맹점 프론트엔드
+목적: ErumPay checkout 열기, 웹 결제창 이동, 모바일 앱 deep link 연결
 ```
 
-MCP should not expose merchant API keys to the model. Credentials should be
-provided through server environment variables.
+`checkout-js`는 가맹점 API Key를 받으면 안 됩니다. 서버가 생성한 `redirectUrl` 또는 공개 checkout token만
+사용해야 합니다.
 
-## Development
+## SDK 테스트
 
 ```bash
 npm install
 npm run typecheck
-npm run build
 npm test
+npm run build
 ```
 
-## Publish Checklist
+전체 로컬 결제 플로우 테스트는 [docs/SDK_TESTING.md](./docs/SDK_TESTING.md)를 참고하세요.
 
-- Confirm package name and version.
-- Run `npm run typecheck`.
-- Run `npm run build`.
-- Run `npm test`.
-- Verify README and `ERROR_CODES.md`.
-- Verify package metadata and exported files.
-- Publish with the team-owned npm account.
+## 배포 전 체크리스트
+
+- 패키지 이름과 버전을 확인합니다.
+- `npm run typecheck`를 실행합니다.
+- `npm test`를 실행합니다.
+- `npm run build`를 실행합니다.
+- README, `ERROR_CODES.md`, `docs/` 문서를 확인합니다.
+- package metadata와 `dist` 산출물을 확인합니다.
+- 팀 소유 npm 계정으로 배포합니다.
+
+## English Summary
+
+`@erumpay/sdk` is the official TypeScript SDK for ErumPay merchant server integrations.
+It must be used only on merchant backends because it requires a merchant API key.
+
+Main APIs:
+
+- `payments.request(params, options?)`
+- `payments.get(paymentId)`
+- `payments.cancel(paymentId, options?)`
+- `payments.waitForStatus(paymentId, options?)`
+
+Use stable idempotency keys for create and cancel requests.
 
 ## License
 
