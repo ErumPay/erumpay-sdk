@@ -1,6 +1,6 @@
 {
   "name": "@erumpay/sdk",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "TypeScript SDK for ErumPay merchant server payment integration.",
   "license": "MIT",
   "type": "module",
@@ -20,7 +20,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "vitest run",
+    "test": "vitest run --cache=false",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
