@@ -1,89 +1,167 @@
 import { PaymentsResource } from './resources/payments';
-import { ErumPayError } from './errors';
+import { ErumPayConnectionError, ErumPayError, type ErumPayErrorPayload } from './errors';
 
-/** ErumPayClient 생성 시 넘기는 설정 */
 export interface ErumPayConfig {
-  /** 가맹점 API 키 (PG 어드민에서 발급) */
+  /** ErumPay가 발급한 가맹점 API Key입니다. 반드시 가맹점 서버에만 보관하세요. */
   apiKey: string;
-  /** API 베이스 URL. 기본값은 운영 서버. 로컬 테스트 시 변경 */
+  /** API Gateway 또는 payment-service base URL입니다. 기본값은 운영 API 주소입니다. */
   baseURL?: string;
+  /** 요청별 타임아웃(ms)입니다. 기본값은 30000입니다. */
+  timeoutMs?: number;
+  /** 재시도 가능한 실패에 대한 자동 재시도 횟수입니다. 기본값은 1입니다. */
+  maxRetries?: number;
+  /** 테스트 또는 특수 런타임에서 사용할 custom fetch 구현입니다. */
+  fetch?: typeof fetch;
 }
 
-/** request() 내부 옵션 */
 interface RequestOptions {
   body?: unknown;
-  /**
-   * true면 Idempotency-Key를 자동 생성해서 헤더에 넣는다.
-   * 결제 생성/취소처럼 중복 실행되면 안 되는 호출에 사용.
-   */
   idempotent?: boolean;
+  idempotencyKey?: string;
 }
 
-/**
- * ErumPay SDK의 진입점.
- *
- * @example
- * const erumpay = new ErumPayClient({ apiKey: 'live_xxx' });
- * const result = await erumpay.payments.request({
- *   amount: 15000,
- *   orderName: '텀블러',
- *   channel: 'ONLINE',
- * });
- */
+const DEFAULT_BASE_URL = 'https://api.erumpay.com';
+const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_RETRIES = 1;
+const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
+
 export class ErumPayClient {
   private readonly apiKey: string;
   private readonly baseURL: string;
+  private readonly timeoutMs: number;
+  private readonly maxRetries: number;
+  private readonly fetchImpl: typeof fetch;
 
-  /** 결제 관련 메서드 모음 (request / get / cancel) */
   public readonly payments: PaymentsResource;
 
   constructor(config: ErumPayConfig) {
     if (!config.apiKey) {
-      throw new Error('ErumPayClient: apiKey는 필수입니다.');
+      throw new Error('ErumPayClient: apiKey is required');
     }
+
     this.apiKey = config.apiKey;
-    this.baseURL = config.baseURL ?? 'https://api.erumpay.com';
+    this.baseURL = (config.baseURL ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
+    this.fetchImpl = config.fetch ?? globalThis.fetch;
+
+    if (!this.fetchImpl) {
+      throw new Error('ErumPayClient: fetch is required in this runtime');
+    }
+
     this.payments = new PaymentsResource(this);
   }
 
   /**
-   * 모든 HTTP 호출이 통과하는 단일 지점.
-   * 인증 헤더, 멱등키, 에러 변환을 여기서 일괄 처리한다.
+   * 모든 리소스가 공유하는 HTTP 진입점입니다.
    *
-   * resources/*.ts 에서 이 메서드를 호출한다.
+   * 인증, JSON 직렬화, 멱등키, 타임아웃, 재시도, SDK 에러 변환을 한 곳에서 처리합니다.
    */
   async request<T>(method: string, path: string, opts: RequestOptions = {}): Promise<T> {
+    const idempotencyKey = opts.idempotent ? opts.idempotencyKey ?? createIdempotencyKey() : undefined;
+    const shouldRetry = method.toUpperCase() === 'GET' || Boolean(opts.idempotent);
+    const attempts = shouldRetry ? this.maxRetries + 1 : 1;
+
+    let lastError: unknown;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        return await this.requestOnce<T>(method, path, opts.body, idempotencyKey);
+      } catch (error) {
+        lastError = error;
+        if (attempt >= attempts - 1 || !isRetryableError(error)) {
+          throw error;
+        }
+        await sleep(backoffDelayMs(attempt));
+      }
+    }
+
+    throw lastError;
+  }
+
+  private async requestOnce<T>(method: string, path: string, body: unknown, idempotencyKey?: string): Promise<T> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`,
       'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'User-Agent': '@erumpay/sdk/1.0.0',
     };
 
-    // 중복 결제 방지: 외부 개발자가 빠뜨려도 SDK가 자동으로 채워줌
-    if (opts.idempotent) {
-      headers['Idempotency-Key'] = crypto.randomUUID();
+    if (idempotencyKey) {
+      headers['Idempotency-Key'] = idempotencyKey;
     }
 
-    const res = await fetch(`${this.baseURL}${path}`, {
-      method,
-      headers,
-      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-    });
-
-    if (!res.ok) {
-      // 서버가 { code, message } 형태로 에러를 준다고 가정. 실패해도 안전하게 폴백
-      const err = (await res.json().catch(() => ({}))) as {
-        code?: string;
-        message?: string;
-      };
-      throw new ErumPayError(
-        res.status,
-        err.code ?? 'UNKNOWN',
-        err.message ?? res.statusText,
-      );
+    let response: Response;
+    try {
+      response = await this.fetchImpl(`${this.baseURL}${path}`, {
+        method,
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      const message = controller.signal.aborted
+        ? `ErumPay request timed out after ${this.timeoutMs}ms`
+        : 'ErumPay request failed before receiving a response';
+      throw new ErumPayConnectionError(message, error);
+    } finally {
+      clearTimeout(timeout);
     }
 
-    // 204 No Content 등 본문이 없는 응답 방어
-    const text = await res.text();
-    return (text ? JSON.parse(text) : undefined) as T;
+    if (!response.ok) {
+      throw await toErumPayError(response);
+    }
+
+    const text = await response.text();
+    if (!text) {
+      return undefined as T;
+    }
+
+    try {
+      return JSON.parse(text) as T;
+    } catch (error) {
+      throw new ErumPayConnectionError('ErumPay returned invalid JSON', error);
+    }
   }
+}
+
+async function toErumPayError(response: Response): Promise<ErumPayError> {
+  const payload = (await response.json().catch(() => ({}))) as ErumPayErrorPayload;
+  return new ErumPayError({
+    status: response.status,
+    code: payload.code ?? 'UNKNOWN',
+    message: payload.message ?? response.statusText,
+    requestId: payload.requestId ?? response.headers.get('x-request-id') ?? undefined,
+    correlationId: payload.correlationId ?? response.headers.get('x-correlation-id') ?? undefined,
+    details: payload.details,
+    raw: payload,
+  });
+}
+
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof ErumPayConnectionError) {
+    return true;
+  }
+  if (error instanceof ErumPayError) {
+    return RETRYABLE_STATUS_CODES.has(error.status);
+  }
+  return false;
+}
+
+function createIdempotencyKey(): string {
+  const cryptoApi = globalThis.crypto as Crypto | undefined;
+  if (cryptoApi?.randomUUID) {
+    return cryptoApi.randomUUID();
+  }
+  return `idem_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+function backoffDelayMs(attempt: number): number {
+  return Math.min(100 * 2 ** attempt, 1_000);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
